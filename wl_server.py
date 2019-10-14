@@ -1,4 +1,4 @@
 from workload_server import wl_db
 
 if __name__ is "__main__":
-    database = wl_db.WorkloadDatabase()
+    wl_db.initialize_database()

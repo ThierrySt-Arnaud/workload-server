@@ -7,7 +7,7 @@ verify_ssl = true
 
 [packages]
 requests = "*"
-cstringio = "*"
+aiosqlite = "*"
 
 [requires]
 python_version = "3.7"
