@@ -1,53 +1,196 @@
-import json
+from typing import Optional, Iterable, Any
+import logging
 from collections import namedtuple
+import struct
+import json
 import asyncio
 from workload_server import wl_db
 
 HOST = "127.0.0.1"
 PORT = 8888
-clients = {}
-rfw = namedtuple("RFW", ["rfw_id", "bench_type", "wl_metric", "batch_unit", "batch_id", "batch_size"])
+
+MAX_FAIL = 5
+
+RFW_HEADER_FORMAT = "!3sI4sQ"
+RFW_HEADER_SIZE = struct.calcsize(RFW_HEADER_FORMAT)
+RFW_HEADER_MARKER = "RFW"
+
+RFD_HEADER_FORMAT = "!3sII4sQ"
+RFD_HEADER_MARKER = "RFD"
+
+FAIL_MARKER = "NOP"
+
+rfw_header = namedtuple("RFW_Header", ["protocol", "payload_size"])
+rfw = namedtuple("RFW", ["bench_type", "wl_metric", "batch_unit", "batch_id", "batch_size"])
 
 
-async def rfw_handler(reader, writer):
-    received = await reader.read()
-    rfw_dict = None
-    remote_addr = writer.get_extra_info('peername')
+class AsyncConnection:
+    """Class encapsulating the asynchronous TCP stream"""
+    def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        """AsyncConnection
 
-    if remote_addr in clients:
-        rfw_id = clients[remote_addr]
-    else:
-        rfw_id = 0
-        clients[remote_addr] = 0
+        :param reader:
+        :param writer:
+        """
+        self.reader = reader
+        self.writer = writer
+        self.peer = self.writer.get_extra_info('peername')
+        self.rfw_id = None
+        self.failed_attempts = 0
+        logging.info(f"Connection open with {self.peer[0]}:{self.peer[1]}")
 
-    try:
-        rfw_dict = json.loads(received)
-        n_rfw = rfw(
-            rfw_id=rfw_dict["rfw_id"],
-            bench_type=rfw_dict["bench_type"],
-            wl_metric=rfw_dict["wl_metric"],
-            batch_unit=rfw_dict["batch_unit"],
-            batch_id=rfw_dict["batch_id"],
-            batch_size=rfw_dict["batch_size"]
-        )
-        if rfw_id+1 == n_rfw.rfw_id:
-            clients[remote_addr] = n_rfw.rfw_id
-            print(f"Received request for workload #{n_rfw.rfw_id} from {remote_addr!r}")
-            rfd = prepare_response(n_rfw)
-        else:
-            print(f"Out of sequence with {remote_addr!r}")
-    except json.JSONDecodeError:
-        print(f"Unable to decode received data from {remote_addr!r}")
-    except KeyError:
-        print(f"Wrong json format from {remote_addr!r}")
+    async def run(self) -> None:
+        """Coroutine to handle a TCP stream asynchronously"""
+        while not self.writer.is_closing():
+            n_header = await self.get_header()
+            if n_header is not None:
+                payload = await self.get_payload(n_header.payload_size)
 
-    writer.close()
+                if payload is not None:
+                    if n_header.protocol == "JSON":
+                        if await self.send_json_replies(payload):
+                            self.writer.close()
+                            break
+                    elif n_header.protocol == "BUFF":
+                        # TODO: Replace with ProtoBuffer implementation
+                        if await self.send_json_replies(payload):
+                            self.writer.close()
+                            break
+
+            self.writer.write(struct.pack(RFD_HEADER_FORMAT,
+                                          bytes(FAIL_MARKER.encode("utf-8")),
+                                          0,
+                                          b"\0\0\0\0",
+                                          0,
+                                          0)
+                              )
+            try:
+                await self.writer.drain()
+            except ConnectionResetError:
+                break
+
+            if self.failed_attempts > MAX_FAIL:
+                logging.error(f"Too many failed attempts from {self.peer[0]}:{self.peer[1]}, closing connection")
+                self.writer.close()
+        try:
+            await self.writer.wait_closed()
+        except BrokenPipeError:
+            pass
+
+    async def get_header(self) -> Optional[rfw_header]:
+        """
+        Coroutine
+
+        :return:
+        """
+        try:
+            header = await self.reader.readexactly(RFW_HEADER_SIZE)
+        except asyncio.IncompleteReadError:
+            logging.error(f"Connection with {self.peer[0]}:{self.peer[1]} closed before receiving header")
+            self.failed_attempts += 1
+            return None
+        (marker, rfw_id, protocol, payload_size) = struct.unpack(RFW_HEADER_FORMAT, header)
+
+        decoded_marker = marker.decode()
+        if decoded_marker == RFW_HEADER_MARKER:
+            decoded_protocol = protocol.decode()
+            if decoded_protocol == "JSON" or decoded_protocol == "BUFF":
+                if self.rfw_id is None:
+                    self.rfw_id = rfw_id
+                elif self.rfw_id != rfw_id:
+                    logging.warning(f"Mismatching RFW ID received from {self.peer[0]}:{self.peer[1]}. "
+                                    f"Expected {self.rfw_id}, got {rfw_id} instead")
+
+                return rfw_header(protocol=decoded_protocol,
+                                  payload_size=payload_size)
+
+        logging.error(f"Invalid header received from {self.peer[0]}:{self.peer[1]}")
+        self.failed_attempts += 1
+        return None
+
+    async def get_payload(self, size: int) -> bytes:
+        """
+
+        :param size:
+        :return:
+        """
+        try:
+            payload = await self.reader.readexactly(size)
+        except asyncio.IncompleteReadError:
+            payload = None
+            logging.error(f"Connection with {self.peer[0]}:{self.peer[1]} closed before receiving payload")
+            self.failed_attempts += 1
+        return payload
+
+    async def check_rfw(self, received) -> Optional[rfw]:
+        """
+
+        :param received:
+        :return: RFW or NoneType
+        """
+        try:
+            n_rfw = rfw(bench_type=received["bench_type"],
+                        wl_metric=received["wl_metric"],
+                        batch_unit=received["batch_unit"],
+                        batch_id=received["batch_id"],
+                        batch_size=received["batch_size"])
+        except KeyError:
+            self.failed_attempts += 1
+            logging.error(f"Wrong json format from {self.peer[0]}:{self.peer[1]}")
+            return None
+
+        logging.info(f"Received request for workload from {self.peer[0]}:{self.peer[1]}")
+        return n_rfw
+
+    async def send_json_replies(self, payload: Iterable[Any]) -> bool:
+        """
+
+        :param payload:
+        :return:
+        """
+        try:
+            new_rfw = await self.check_rfw(json.loads(payload))
+        except json.JSONDecodeError:
+            self.failed_attempts += 1
+            logging.error(f"Unable to decode received data from {self.peer[0]}:{self.peer[1]}")
+            return False
+
+        for i in range(new_rfw.batch_size):
+            curr_batch_id = new_rfw.batch_id+i
+            curr_batch = await wl_db.get_batch(new_rfw.bench_type, new_rfw.wl_metric,
+                                               new_rfw.batch_unit, curr_batch_id)
+            serialized = json.dumps({"keys": curr_batch[0].keys(),
+                                     "data": [tuple(row) for row in curr_batch]})
+            serialized_length = len(serialized)
+            rfd_header = struct.pack(RFD_HEADER_FORMAT,
+                                     bytes(RFD_HEADER_MARKER.encode("utf-8")),
+                                     self.rfw_id,
+                                     curr_batch_id,
+                                     b"JSON",
+                                     serialized_length)
+
+            logging.error(f"Sending {serialized_length} bytes of batch {curr_batch_id} "
+                          f"to {self.peer[0]}:{self.peer[1]}")
+            self.writer.write(rfd_header)
+            await self.writer.drain()
+            self.writer.write(bytes(serialized.encode("utf-8")))
+            await self.writer.drain()
+
+        return True
 
 
-async def prepare_response(n_rfw):
-    requested_data = await wl_db.get_batch(n_rfw.bench_type, n_rfw.wl_metric,
-                                           n_rfw.batch_unit,  n_rfw.batch_id)
+async def rfw_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    """
+    Asynchronous callback handler for TCP server. Initializes an AsyncConnection object
+
+    :param reader:
+    :param writer:
+    """
+    await AsyncConnection(reader, writer).run()
 
 
-async def start_rfw_server():
+async def start_rfw_server() -> asyncio.AbstractServer:
+    logging.basicConfig(format='%(asctime)s - %(message)s', datefmt='%d-%b-%y %H:%M:%S', level=logging.INFO)
+
+    logging.info(f"Initializing server on {HOST}:{PORT}")
     return await asyncio.start_server(rfw_handler, HOST, PORT)
