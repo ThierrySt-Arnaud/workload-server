@@ -7,7 +7,8 @@ async def main():
     async with await rfw_tcp_server.start_rfw_server() as server:
         await server.serve_forever()
 
-if __name__ is "__main__":
+if __name__ == "__main__":
+    print("Starting server")
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
