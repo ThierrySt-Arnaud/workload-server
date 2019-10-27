@@ -1,4 +1,4 @@
-from typing import Optional, List, Any
+from typing import Optional, List
 import logging
 from collections import namedtuple
 import struct
@@ -233,8 +233,8 @@ async def rfw_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     await AsyncConnection(reader, writer).run()
 
 
-async def start_rfw_server() -> asyncio.AbstractServer:
+async def start_rfw_server(host: str = HOST, port: int = PORT) -> asyncio.AbstractServer:
     logging.basicConfig(format='%(asctime)s - %(message)s', datefmt='%d-%b-%y %H:%M:%S', level=logging.INFO)
 
-    logging.info(f"Initializing server on {HOST}:{PORT}")
-    return await asyncio.start_server(rfw_handler, HOST, PORT)
+    logging.info(f"Initializing server on {host}:{port}")
+    return await asyncio.start_server(rfw_handler, host, port)
