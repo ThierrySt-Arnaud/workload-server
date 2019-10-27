@@ -1,0 +1,23 @@
+syntax = "proto2";
+
+package workload;
+
+message ProtoRfw{
+    required string bench_type = 1;
+    required uint32 wl_metrics = 2;
+    required uint32 batch_unit = 3;
+    required uint32 batch_id = 4;
+    required uint32 batch_size = 5;
+}
+
+message ProtoRfd{
+    repeated string keys = 1;
+    repeated ProtoWorkload workload = 2;
+
+    message ProtoWorkload {
+        optional int32 cpu = 1;
+        optional int32 net_in = 2;
+        optional int32 net_out = 3;
+        optional double memory = 4;
+    }
+}

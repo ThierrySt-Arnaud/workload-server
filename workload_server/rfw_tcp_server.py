@@ -1,10 +1,13 @@
-from typing import Optional, Iterable, Any
+from typing import Optional, List, Any
 import logging
 from collections import namedtuple
 import struct
 import json
 import asyncio
+from sqlite3 import Row
 from workload_server import wl_db
+import workload_protocol_pb2
+from google.protobuf.message import DecodeError
 
 HOST = "127.0.0.1"
 PORT = 8888
@@ -21,7 +24,7 @@ RFD_HEADER_MARKER = "RFD"
 FAIL_MARKER = "NOP"
 
 rfw_header = namedtuple("RFW_Header", ["protocol", "payload_size"])
-rfw = namedtuple("RFW", ["bench_type", "wl_metric", "batch_unit", "batch_id", "batch_size"])
+rfw = namedtuple("RFW", ["bench_type", "wl_metrics", "batch_unit", "batch_id", "batch_size"])
 
 
 class AsyncConnection:
@@ -52,18 +55,13 @@ class AsyncConnection:
                             self.writer.close()
                             break
                     elif n_header.protocol == "BUFF":
-                        # TODO: Replace with ProtoBuffer implementation
-                        if await self.send_json_replies(payload):
+                        if await self.send_protobuf_replies(payload):
                             self.writer.close()
                             break
 
             self.writer.write(struct.pack(RFD_HEADER_FORMAT,
                                           bytes(FAIL_MARKER.encode("utf-8")),
-                                          0,
-                                          b"\0\0\0\0",
-                                          0,
-                                          0)
-                              )
+                                          0, 0, b"\0\0\0\0", 0))
             try:
                 await self.writer.drain()
             except ConnectionResetError:
@@ -130,7 +128,7 @@ class AsyncConnection:
         """
         try:
             n_rfw = rfw(bench_type=received["bench_type"],
-                        wl_metric=received["wl_metric"],
+                        wl_metrics=received["wl_metrics"],
                         batch_unit=received["batch_unit"],
                         batch_id=received["batch_id"],
                         batch_size=received["batch_size"])
@@ -142,7 +140,7 @@ class AsyncConnection:
         logging.info(f"Received request for workload from {self.peer[0]}:{self.peer[1]}")
         return n_rfw
 
-    async def send_json_replies(self, payload: Iterable[Any]) -> bool:
+    async def send_json_replies(self, payload: bytes) -> bool:
         """
 
         :param payload:
@@ -157,7 +155,7 @@ class AsyncConnection:
 
         for i in range(new_rfw.batch_size):
             curr_batch_id = new_rfw.batch_id+i
-            curr_batch = await wl_db.get_batch(new_rfw.bench_type, new_rfw.wl_metric,
+            curr_batch = await wl_db.get_batch(new_rfw.bench_type, new_rfw.wl_metrics,
                                                new_rfw.batch_unit, curr_batch_id)
             serialized = json.dumps({"keys": curr_batch[0].keys(),
                                      "data": [tuple(row) for row in curr_batch]})
@@ -177,6 +175,52 @@ class AsyncConnection:
             await self.writer.drain()
 
         return True
+
+    async def send_protobuf_replies(self, payload: bytes) -> bool:
+        proto_rfw = workload_protocol_pb2.ProtoRfw()
+        try:
+            proto_rfw.ParseFromString(payload)
+        except DecodeError:
+            self.failed_attempts += 1
+            logging.error(f"Unable to decode received data from {self.peer[0]}:{self.peer[1]}")
+            return False
+
+        logging.info(f"Received request for workload from {self.peer[0]}:{self.peer[1]}")
+
+        for i in range(proto_rfw.batch_size):
+            curr_batch_id = proto_rfw.batch_id + i
+            curr_batch = await wl_db.get_batch(proto_rfw.bench_type, proto_rfw.wl_metrics,
+                                               proto_rfw.batch_unit, curr_batch_id)
+            proto_rfd = self.create_proto_rfd(curr_batch)
+            serialized = proto_rfd.SerializeToString()
+            serialized_length = proto_rfd.ByteSize()
+            rfd_header = struct.pack(RFD_HEADER_FORMAT,
+                                     bytes(RFD_HEADER_MARKER.encode("utf-8")),
+                                     self.rfw_id,
+                                     curr_batch_id,
+                                     b"BUFF",
+                                     serialized_length)
+
+            logging.error(f"Sending {serialized_length} bytes of batch {curr_batch_id} "
+                          f"to {self.peer[0]}:{self.peer[1]}")
+            self.writer.write(rfd_header)
+            await self.writer.drain()
+            self.writer.write(serialized)
+            await self.writer.drain()
+
+        return True
+
+    @staticmethod
+    def create_proto_rfd(batch: List[Row]) -> workload_protocol_pb2.ProtoRfd:
+        proto_rfd = workload_protocol_pb2.ProtoRfd()
+        keys = batch[0].keys()
+        proto_rfd.keys.extend(keys)
+        for row in batch:
+            workload = proto_rfd.workload.add()
+            for i, key in enumerate(keys):
+                setattr(workload, key, row[i])
+
+        return proto_rfd
 
 
 async def rfw_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:

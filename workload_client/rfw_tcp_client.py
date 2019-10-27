@@ -4,6 +4,8 @@ from collections import namedtuple
 import struct
 import json
 import asyncio
+import workload_protocol_pb2
+from google.protobuf.message import DecodeError
 
 HOST = "127.0.0.1"
 PORT = 8888
@@ -54,7 +56,7 @@ class RfwTcpClient:
         self.rfw_id = rfw_id
         self.protocol = protocol if protocol is "BUFF" else "JSON"
         self.rfw = {"bench_type": bench_type,
-                    "wl_metric": metrics,
+                    "wl_metrics": metrics,
                     "batch_unit": batch_unit,
                     "batch_id": batch_id,
                     "batch_size": batch_size}
@@ -84,10 +86,9 @@ class RfwTcpClient:
         :return:
         """
         if self.protocol is "BUFF":
-            # TODO: Replace with ProtoBuff implementation
-            serialized_rfw = json.dumps(self.rfw)
+            serialized_rfw = self.create_proto_rfw().SerializeToString()
         else:
-            serialized_rfw = json.dumps(self.rfw)
+            serialized_rfw = bytes(json.dumps(self.rfw).encode("utf-8"))
 
         self.writer.write(struct.pack(RFW_HEADER_FORMAT,
                                       bytes(RFW_HEADER_MARKER.encode("utf-8")),
@@ -95,7 +96,7 @@ class RfwTcpClient:
                                       bytes(self.protocol.encode("utf-8")),
                                       len(serialized_rfw)))
         await self.writer.drain()
-        self.writer.write(bytes(serialized_rfw.encode("utf-8")))
+        self.writer.write(serialized_rfw)
         await self.writer.drain()
 
     async def get_replies(self) -> bool:
@@ -122,8 +123,7 @@ class RfwTcpClient:
                     await self.send_rfw()
                     continue
 
-                # TODO: replace with ProtoBuff implementation
-                rcv_success = await self.receive_json_rfd(header)\
+                rcv_success = await self.receive_protobuf_rfd(header)\
                     if header.protocol == "BUFF"\
                     else await self.receive_json_rfd(header)
 
@@ -201,8 +201,7 @@ class RfwTcpClient:
                               bench_type=self.rfw["bench_type"],
                               batch_id=header.last_batch,
                               keys=decoded_rfd["keys"],
-                              data=decoded_rfd["data"]
-                              )
+                              data=decoded_rfd["data"])
         except KeyError:
             logging.error("Invalid RFD received")
             return False
@@ -211,6 +210,46 @@ class RfwTcpClient:
             self.batch_rcv = self.rfw["batch_size"]
         await self.queue.put(new_batch)
         return True
+
+    async def receive_protobuf_rfd(self, header: rfd_header) -> bool:
+        """
+
+        :param header:
+        :return:
+        """
+        try:
+            payload = await self.reader.readexactly(header.payload_size)
+        except asyncio.IncompleteReadError:
+            logging.error(f"Connection with server closed before receiving payload")
+            return False
+
+        decoded_rfd = workload_protocol_pb2.ProtoRfd()
+        try:
+            decoded_rfd.ParseFromString(payload)
+        except DecodeError:
+            logging.error("Unable to decode received data from the server")
+            return False
+
+        keys = decoded_rfd.keys
+        new_batch = batch(rfw_id=self.rfw_id,
+                          bench_type=self.rfw["bench_type"],
+                          batch_id=header.last_batch,
+                          keys=keys,
+                          data=[[getattr(workload, key) for key in keys] for workload in decoded_rfd.workload])
+
+        if len(decoded_rfd.workload) < self.rfw["batch_unit"]:
+            self.batch_rcv = self.rfw["batch_size"]
+        await self.queue.put(new_batch)
+        return True
+
+    def create_proto_rfw(self) -> workload_protocol_pb2.ProtoRfw:
+        proto_rfw = workload_protocol_pb2.ProtoRfw()
+        proto_rfw.bench_type = self.rfw["bench_type"]
+        proto_rfw.wl_metrics = self.rfw["wl_metrics"]
+        proto_rfw.batch_unit = self.rfw["batch_unit"]
+        proto_rfw.batch_id = self.rfw["batch_id"]
+        proto_rfw.batch_size = self.rfw["batch_size"]
+        return proto_rfw
 
     async def reopen_connection(self):
         if self.writer is not None:
