@@ -146,7 +146,14 @@ def setup_arg_parser() -> argparse.ArgumentParser:
     locrem.add_argument("--local", action="store_true",
                         help="connect to a locally running server, "
                              "equivalent to --hostip 127.0.0.1")
-    parser.add_argument("-p", "--port", type=int, default=REMOTE_PORT,
+
+    class PortAction(argparse.Action):
+        def __call__(self, parser, namespace, port, option_string=None):
+            if port < 0 or port > 65535:
+                parser.error(f"{option_string} must be between 0 and 65535")
+
+            setattr(namespace, self.dest, port)
+    parser.add_argument("-p", "--port", action=PortAction, type=int, default=REMOTE_PORT,
                         help=f"specify port\ndefaults to {REMOTE_PORT}")
 
     # Arguments for csv formatted batch file
@@ -181,7 +188,6 @@ def setup_arg_parser() -> argparse.ArgumentParser:
 if __name__ == "__main__":
     parser = setup_arg_parser()
     args = parser.parse_args()
-    # print(args)
     try:
         asyncio.run(main())
         print("All batches received successfully")
