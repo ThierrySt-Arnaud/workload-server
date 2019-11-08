@@ -1,0 +1,3 @@
+protocol,bench_type,metrics,batch_unit,batch_id,batch_size
+JSON,DVD-training,CPU+NetIn,20,4,20
+BUFF,NDBench-test,cpu-networkout-memory,100,0,5

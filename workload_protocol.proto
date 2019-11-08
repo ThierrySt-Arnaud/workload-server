@@ -15,9 +15,9 @@ message ProtoRfd{
     repeated ProtoWorkload workload = 2;
 
     message ProtoWorkload {
-        optional int32 cpu = 1;
-        optional int32 net_in = 2;
-        optional int32 net_out = 3;
+        optional uint32 cpu = 1;
+        optional uint32 net_in = 2;
+        optional uint32 net_out = 3;
         optional double memory = 4;
     }
 }

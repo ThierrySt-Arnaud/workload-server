@@ -40,6 +40,7 @@ class AsyncConnection:
         self.peer = self.writer.get_extra_info('peername')
         self.rfw_id = None
         self.failed_attempts = 0
+        self.writer_tasks = []
         logging.info(f"Connection open with {self.peer[0]}:{self.peer[1]}")
 
     async def run(self) -> None:
@@ -51,11 +52,13 @@ class AsyncConnection:
 
                 if payload is not None:
                     if n_header.protocol == "JSON":
-                        if await self.send_json_replies(payload):
+                        if await self.prepare_json_replies(payload):
+                            await asyncio.gather(*self.writer_tasks)
                             self.writer.close()
                             break
                     elif n_header.protocol == "BUFF":
-                        if await self.send_protobuf_replies(payload):
+                        if await self.prepare_protobuf_replies(payload):
+                            await asyncio.gather(*self.writer_tasks)
                             self.writer.close()
                             break
 
@@ -70,6 +73,7 @@ class AsyncConnection:
             if self.failed_attempts > MAX_FAIL:
                 logging.error(f"Too many failed attempts from {self.peer[0]}:{self.peer[1]}, closing connection")
                 self.writer.close()
+
         try:
             await self.writer.wait_closed()
         except BrokenPipeError:
@@ -140,7 +144,7 @@ class AsyncConnection:
         logging.info(f"Received request for workload from {self.peer[0]}:{self.peer[1]}")
         return n_rfw
 
-    async def send_json_replies(self, payload: bytes) -> bool:
+    async def prepare_json_replies(self, payload: bytes) -> bool:
         """
 
         :param payload:
@@ -166,17 +170,12 @@ class AsyncConnection:
                                      curr_batch_id,
                                      b"JSON",
                                      serialized_length)
-
-            logging.error(f"Sending {serialized_length} bytes of batch {curr_batch_id} "
-                          f"to {self.peer[0]}:{self.peer[1]}")
-            self.writer.write(rfd_header)
-            await self.writer.drain()
-            self.writer.write(bytes(serialized.encode("utf-8")))
-            await self.writer.drain()
+            self.writer_tasks.append(asyncio.create_task(self.send_reply(rfd_header, bytes(serialized.encode("utf-8")),
+                                                                         serialized_length, curr_batch_id)))
 
         return True
 
-    async def send_protobuf_replies(self, payload: bytes) -> bool:
+    async def prepare_protobuf_replies(self, payload: bytes) -> bool:
         proto_rfw = workload_protocol_pb2.ProtoRfw()
         try:
             proto_rfw.ParseFromString(payload)
@@ -200,15 +199,18 @@ class AsyncConnection:
                                      curr_batch_id,
                                      b"BUFF",
                                      serialized_length)
-
-            logging.error(f"Sending {serialized_length} bytes of batch {curr_batch_id} "
-                          f"to {self.peer[0]}:{self.peer[1]}")
-            self.writer.write(rfd_header)
-            await self.writer.drain()
-            self.writer.write(serialized)
-            await self.writer.drain()
+            self.writer_tasks.append(asyncio.create_task(self.send_reply(rfd_header, serialized,
+                                                                         serialized_length, curr_batch_id)))
 
         return True
+
+    async def send_reply(self, rfd_header: bytes, rfd: bytes, length: int, batch_id: int) -> None:
+        logging.error(f"Sending {length} bytes of batch {batch_id} "
+                      f"to {self.peer[0]}:{self.peer[1]}")
+        self.writer.write(rfd_header)
+        await self.writer.drain()
+        self.writer.write(rfd)
+        await self.writer.drain()
 
     @staticmethod
     def create_proto_rfd(batch: List[Row]) -> workload_protocol_pb2.ProtoRfd:

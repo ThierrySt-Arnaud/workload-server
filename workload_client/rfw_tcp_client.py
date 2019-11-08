@@ -1,6 +1,7 @@
 import logging
 from typing import Optional
 from collections import namedtuple
+from ipaddress import ip_address
 import struct
 import json
 import asyncio
@@ -38,6 +39,8 @@ class RfwTcpClient:
                  batch_unit: int,
                  batch_id: int,
                  batch_size: int,
+                 host: ip_address = ip_address(HOST),
+                 port: int = PORT,
                  tries: int = MAX_FAIL
                  ) -> None:
         """
@@ -60,6 +63,8 @@ class RfwTcpClient:
                     "batch_unit": batch_unit,
                     "batch_id": batch_id,
                     "batch_size": batch_size}
+        self.host = host
+        self.port = port
         self.retries = tries
         self.batch_rcv = 0
         self.reader = None
@@ -71,8 +76,8 @@ class RfwTcpClient:
         :return:
         """
         logging.basicConfig(format='%(asctime)s - %(message)s', datefmt='%d-%b-%y %H:%M:%S', level=logging.INFO)
-        logging.info(f"Connecting to server on {HOST}:{PORT}")
-        (reader, writer) = await asyncio.open_connection(HOST, PORT)
+        logging.info(f"Connecting to server on {self.host}:{self.port}")
+        (reader, writer) = await asyncio.open_connection(self.host, self.port)
         self.reader, self.writer = reader, writer
         await self.send_rfw()
         await self.get_replies()
@@ -95,6 +100,7 @@ class RfwTcpClient:
                                       self.rfw_id,
                                       bytes(self.protocol.encode("utf-8")),
                                       len(serialized_rfw)))
+        logging.info(f"RFW#{self.rfw_id} - Sending {len(serialized_rfw)} bytes of the serialized RFW")
         await self.writer.drain()
         self.writer.write(serialized_rfw)
         await self.writer.drain()
@@ -130,7 +136,8 @@ class RfwTcpClient:
                 if rcv_success:
                     if self.batch_rcv < self.rfw["batch_size"]:
                         self.batch_rcv += 1
-                        logging.info(f"Batch {self.batch_rcv} of {self.rfw['batch_size']} received.")
+                        logging.info(f"RFW#{self.rfw_id} - {header.payload_size} bytes of batch "
+                                     f"{self.batch_rcv}/{self.rfw['batch_size']} received.")
                     else:
                         logging.warning("Unexpected batch received")
                 else:
@@ -141,7 +148,7 @@ class RfwTcpClient:
                 self.retries -= 1
 
         if self.batch_rcv == self.rfw["batch_size"]:
-            logging.info(f"All batches for rfw #{self.rfw_id} received")
+            logging.info(f"RFW#{self.rfw_id} - All batches received")
             return True
         return False
 
@@ -160,7 +167,7 @@ class RfwTcpClient:
                                 f"got {last_batch} instead")
             if decoded_protocol == "BUFF" or decoded_protocol == "JSON":
                 if decoded_protocol != self.protocol:
-                    logging.warning(f"Mismatching Protocol received. Expected {self.protocol},"
+                    logging.warning(f"Mismatching protocol received. Expected {self.protocol},"
                                     f" got {decoded_protocol} instead")
 
                 if self.rfw_id != rfw_id:

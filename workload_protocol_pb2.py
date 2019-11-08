@@ -20,7 +20,7 @@ DESCRIPTOR = _descriptor.FileDescriptor(
   package='workload',
   syntax='proto2',
   serialized_options=None,
-  serialized_pb=_b('\n\x17workload_protocol.proto\x12\x08workload\"l\n\x08ProtoRfw\x12\x12\n\nbench_type\x18\x01 \x02(\t\x12\x12\n\nwl_metrics\x18\x02 \x02(\r\x12\x12\n\nbatch_unit\x18\x03 \x02(\r\x12\x10\n\x08\x62\x61tch_id\x18\x04 \x02(\r\x12\x12\n\nbatch_size\x18\x05 \x02(\r\"\x9b\x01\n\x08ProtoRfd\x12\x0c\n\x04keys\x18\x01 \x03(\t\x12\x32\n\x08workload\x18\x02 \x03(\x0b\x32 .workload.ProtoRfd.ProtoWorkload\x1aM\n\rProtoWorkload\x12\x0b\n\x03\x63pu\x18\x01 \x01(\x05\x12\x0e\n\x06net_in\x18\x02 \x01(\x05\x12\x0f\n\x07net_out\x18\x03 \x01(\x05\x12\x0e\n\x06memory\x18\x04 \x01(\x01')
+  serialized_pb=_b('\n\x17workload_protocol.proto\x12\x08workload\"l\n\x08ProtoRfw\x12\x12\n\nbench_type\x18\x01 \x02(\t\x12\x12\n\nwl_metrics\x18\x02 \x02(\r\x12\x12\n\nbatch_unit\x18\x03 \x02(\r\x12\x10\n\x08\x62\x61tch_id\x18\x04 \x02(\r\x12\x12\n\nbatch_size\x18\x05 \x02(\r\"\x9b\x01\n\x08ProtoRfd\x12\x0c\n\x04keys\x18\x01 \x03(\t\x12\x32\n\x08workload\x18\x02 \x03(\x0b\x32 .workload.ProtoRfd.ProtoWorkload\x1aM\n\rProtoWorkload\x12\x0b\n\x03\x63pu\x18\x01 \x01(\r\x12\x0e\n\x06net_in\x18\x02 \x01(\r\x12\x0f\n\x07net_out\x18\x03 \x01(\r\x12\x0e\n\x06memory\x18\x04 \x01(\x01')
 )
 
 
@@ -94,21 +94,21 @@ _PROTORFD_PROTOWORKLOAD = _descriptor.Descriptor(
   fields=[
     _descriptor.FieldDescriptor(
       name='cpu', full_name='workload.ProtoRfd.ProtoWorkload.cpu', index=0,
-      number=1, type=5, cpp_type=1, label=1,
+      number=1, type=13, cpp_type=3, label=1,
       has_default_value=False, default_value=0,
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
       serialized_options=None, file=DESCRIPTOR),
     _descriptor.FieldDescriptor(
       name='net_in', full_name='workload.ProtoRfd.ProtoWorkload.net_in', index=1,
-      number=2, type=5, cpp_type=1, label=1,
+      number=2, type=13, cpp_type=3, label=1,
       has_default_value=False, default_value=0,
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
       serialized_options=None, file=DESCRIPTOR),
     _descriptor.FieldDescriptor(
       name='net_out', full_name='workload.ProtoRfd.ProtoWorkload.net_out', index=2,
-      number=3, type=5, cpp_type=1, label=1,
+      number=3, type=13, cpp_type=3, label=1,
       has_default_value=False, default_value=0,
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
