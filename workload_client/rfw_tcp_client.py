@@ -1,7 +1,6 @@
 import logging
 from typing import Optional
 from collections import namedtuple
-from ipaddress import ip_address
 import struct
 import json
 import asyncio
@@ -39,7 +38,7 @@ class RfwTcpClient:
                  batch_unit: int,
                  batch_id: int,
                  batch_size: int,
-                 host: ip_address = ip_address(HOST),
+                 host: str = HOST,
                  port: int = PORT,
                  tries: int = MAX_FAIL
                  ) -> None:
@@ -57,7 +56,7 @@ class RfwTcpClient:
         """
         self.queue = queue
         self.rfw_id = rfw_id
-        self.protocol = protocol if protocol is "BUFF" else "JSON"
+        self.protocol = protocol if protocol == "BUFF" else "JSON"
         self.rfw = {"bench_type": bench_type,
                     "wl_metrics": metrics,
                     "batch_unit": batch_unit,
@@ -90,7 +89,11 @@ class RfwTcpClient:
 
         :return:
         """
-        if self.protocol is "BUFF":
+
+        logging.info(f"RFW#{self.rfw_id} - RFW is\t{self.protocol}\t{self.rfw['bench_type']}\t"
+                     f"metrics: {self.rfw['wl_metrics']}\tunit: {self.rfw['batch_unit']}\t"
+                     f"id: {self.rfw['batch_id']}\tsize: {self.rfw['batch_size']}")
+        if self.protocol == "BUFF":
             serialized_rfw = self.create_proto_rfw().SerializeToString()
         else:
             serialized_rfw = bytes(json.dumps(self.rfw).encode("utf-8"))
@@ -178,9 +181,9 @@ class RfwTcpClient:
 
         elif decoded_marker == FAIL_MARKER:
             logging.error("Server was unable to process request")
-            return rfd_header(last_batch=-1,
+            return rfd_header(last_batch=None,
                               protocol=None,
-                              payload_size=None)
+                              payload_size=-1)
 
         logging.error("Invalid data header received from server")
         return None

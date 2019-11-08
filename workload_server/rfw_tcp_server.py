@@ -12,7 +12,7 @@ from google.protobuf.message import DecodeError
 HOST = "127.0.0.1"
 PORT = 8888
 
-MAX_FAIL = 5
+MAX_FAIL = 3
 
 RFW_HEADER_FORMAT = "!3sI4sQ"
 RFW_HEADER_SIZE = struct.calcsize(RFW_HEADER_FORMAT)
